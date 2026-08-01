@@ -1,0 +1,37 @@
+{
+  "name": "@gmail/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@gmail/core": "*",
+    "@gmail/gmail": "*",
+    "@gmail/sync": "*",
+    "@gmail/ui": "*",
+    "better-sqlite3": "^13.0.2",
+    "googleapis": "^173.0.0",
+    "lucide-react": "^0.500.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.0.0"
+  },
+  "devDependencies": {
+    "@gmail/tsconfig": "*",
+    "@swc/core": "^1.10.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.2.0",
+    "electron-vite": "^5.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.3.3"
+  }
+}

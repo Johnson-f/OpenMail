@@ -1,0 +1,10 @@
+{
+  "extends": "@gmail/tsconfig/react.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": { "@/*": ["./src/*"], "@gmail/core": ["../core/src/index.ts"] }
+  },
+  "include": ["src/**/*"],
+  "references": [{ "path": "../core" }]
+}
