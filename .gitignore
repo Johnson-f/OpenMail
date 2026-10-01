@@ -1,1 +1,8 @@
-.env 
+.env
+.DS_Store
+Config/Secrets.xcconfig
+OpenMail.xcodeproj/
+App/Info.plist
+.build/
+DerivedData/
+xcuserdata/

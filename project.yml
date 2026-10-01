@@ -1,0 +1,34 @@
+name: OpenMail
+options:
+  bundleIdPrefix: app.openmail
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/App.xcconfig
+  Release: Config/App.xcconfig
+packages:
+  OpenMailKit:
+    path: OpenMailKit
+targets:
+  OpenMail:
+    type: application
+    platform: macOS
+    sources: [App]
+    dependencies:
+      - package: OpenMailKit
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: OpenMail
+        LSApplicationCategoryType: public.app-category.productivity
+        GoogleClientID: $(GOOGLE_CLIENT_ID)
+        GoogleClientSecret: $(GOOGLE_CLIENT_SECRET)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.openmail.OpenMail
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: YES

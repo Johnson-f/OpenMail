@@ -1,0 +1,2 @@
+// Google OAuth credentials come from Secrets.xcconfig, generated from .env by scripts/generate-secrets.sh.
+#include? "Secrets.xcconfig"
