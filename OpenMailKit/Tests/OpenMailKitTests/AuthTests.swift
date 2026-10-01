@@ -22,9 +22,9 @@ struct AuthTests {
         #expect(query["scope"] == "https://www.googleapis.com/auth/gmail.modify")
     }
 
-    @Test func loopbackParsesCallbackQuery() {
-        let request = Data("GET /?state=abc&code=4%2F0Ab HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8)
-        #expect(LoopbackServer.queryParameters(fromRequest: request) == ["state": "abc", "code": "4/0Ab"])
+    @Test func loopbackParsesCallbackQuery() throws {
+        let request = try #require(HTTPRequest.parse(Data("GET /?state=abc&code=4%2F0Ab HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8)))
+        #expect(LoopbackServer.queryParameters(target: request.target) == ["state": "abc", "code": "4/0Ab"])
     }
 
     @Test func loopbackServerDeliversCallback() async throws {

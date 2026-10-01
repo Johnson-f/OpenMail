@@ -19,6 +19,8 @@ Requires Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew i
    open OpenMail.xcodeproj
    ```
 
+4. In the app, open **Settings** (⌘,). The assistant uses your installed [Codex CLI](https://developers.openai.com/codex/cli) and ChatGPT plan by default (sign in once with `codex login`); you can switch it to an Anthropic API key. Add a Voyage API key for semantic search.
+
 ## Layout
 
 - `OpenMailKit/` — Swift package with sign-in, Gmail sync, the local store and sending. Test it with `swift test`.

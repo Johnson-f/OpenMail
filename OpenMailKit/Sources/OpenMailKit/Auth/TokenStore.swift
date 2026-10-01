@@ -11,15 +11,16 @@ public struct KeychainError: Error {
     public let status: OSStatus
 }
 
-public struct KeychainTokenStore: TokenStore {
+/// Generic-password items in the login Keychain, grouped under one service name.
+public struct KeychainStore: Sendable {
     private let service: String
 
-    public init(service: String = "app.openmail.google-refresh-token") {
+    public init(service: String) {
         self.service = service
     }
 
-    public func refreshToken(for accountID: String) throws -> String? {
-        var query = baseQuery(accountID)
+    public func string(for account: String) throws -> String? {
+        var query = baseQuery(account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
@@ -29,11 +30,11 @@ public struct KeychainTokenStore: TokenStore {
         return String(decoding: data, as: UTF8.self)
     }
 
-    public func setRefreshToken(_ token: String, for accountID: String) throws {
-        let data = Data(token.utf8)
-        let status = SecItemUpdate(baseQuery(accountID) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+    public func set(_ value: String, for account: String) throws {
+        let data = Data(value.utf8)
+        let status = SecItemUpdate(baseQuery(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
-            var item = baseQuery(accountID)
+            var item = baseQuery(account)
             item[kSecValueData as String] = data
             item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
             let addStatus = SecItemAdd(item as CFDictionary, nil)
@@ -43,16 +44,64 @@ public struct KeychainTokenStore: TokenStore {
         }
     }
 
-    public func removeRefreshToken(for accountID: String) throws {
-        let status = SecItemDelete(baseQuery(accountID) as CFDictionary)
+    public func remove(_ account: String) throws {
+        let status = SecItemDelete(baseQuery(account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError(status: status) }
     }
 
-    private func baseQuery(_ accountID: String) -> [String: Any] {
+    private func baseQuery(_ account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: accountID,
+            kSecAttrAccount as String: account,
         ]
+    }
+}
+
+public struct KeychainTokenStore: TokenStore {
+    private let keychain: KeychainStore
+
+    public init(service: String = "app.openmail.google-refresh-token") {
+        keychain = KeychainStore(service: service)
+    }
+
+    public func refreshToken(for accountID: String) throws -> String? {
+        try keychain.string(for: accountID)
+    }
+
+    public func setRefreshToken(_ token: String, for accountID: String) throws {
+        try keychain.set(token, for: accountID)
+    }
+
+    public func removeRefreshToken(for accountID: String) throws {
+        try keychain.remove(accountID)
+    }
+}
+
+public enum APIKeyKind: String, Sendable, CaseIterable {
+    case anthropic
+    case voyage
+}
+
+public protocol APIKeyStore: Sendable {
+    func key(_ kind: APIKeyKind) throws -> String?
+    func setKey(_ key: String?, for kind: APIKeyKind) throws
+}
+
+public struct KeychainAPIKeyStore: APIKeyStore {
+    private let keychain = KeychainStore(service: "app.openmail.api-keys")
+
+    public init() {}
+
+    public func key(_ kind: APIKeyKind) throws -> String? {
+        try keychain.string(for: kind.rawValue)
+    }
+
+    public func setKey(_ key: String?, for kind: APIKeyKind) throws {
+        if let key, !key.isEmpty {
+            try keychain.set(key, for: kind.rawValue)
+        } else {
+            try keychain.remove(kind.rawValue)
+        }
     }
 }

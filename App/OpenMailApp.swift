@@ -11,6 +11,11 @@ struct OpenMailApp: App {
                 .frame(minWidth: 900, minHeight: 560)
         }
         .commands { MailCommands(model: model) }
+
+        Settings {
+            SettingsView()
+                .environment(model)
+        }
     }
 }
 
@@ -28,6 +33,16 @@ struct MailCommands: Commands {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
             Button("Add Google Account…") { model.addAccount() }
+        }
+        CommandGroup(after: .textEditing) {
+            Button("Search or Ask…") { model.isPaletteVisible = true }
+                .keyboardShortcut("k")
+                .disabled(model.accounts.isEmpty)
+        }
+        CommandGroup(after: .sidebar) {
+            Button(model.isAssistantVisible ? "Hide Assistant" : "Show Assistant") { model.isAssistantVisible.toggle() }
+                .keyboardShortcut("j")
+                .disabled(model.accounts.isEmpty)
         }
         CommandMenu("Message") {
             Button("Reply") { model.reply(all: false) }

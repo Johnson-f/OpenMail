@@ -32,17 +32,23 @@ struct ThreadDetailView: View {
         .onChange(of: model.selectedThread) { expanded = [] }
         .toolbar {
             ToolbarItemGroup {
-                Button("Reply", systemImage: "arrowshape.turn.up.left") { model.reply(all: false) }
-                Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { model.reply(all: true) }
-                Button("Archive", systemImage: "archivebox") { model.archiveSelection() }
-                Button("Trash", systemImage: "trash") { model.trashSelection() }
+                Group {
+                    Button("Reply", systemImage: "arrowshape.turn.up.left") { model.reply(all: false) }
+                    Button("Reply All", systemImage: "arrowshape.turn.up.left.2") { model.reply(all: true) }
+                    Button("Archive", systemImage: "archivebox") { model.archiveSelection() }
+                    Button("Trash", systemImage: "trash") { model.trashSelection() }
+                }
+                .disabled(model.selectedThread == nil)
                 Button(
                     model.selectedThreadSummary?.isStarred == true ? "Unstar" : "Star",
                     systemImage: model.selectedThreadSummary?.isStarred == true ? "star.fill" : "star"
                 ) { model.toggleStarred() }
+                .disabled(model.selectedThread == nil)
+            }
+            ToolbarItem {
+                Button("Assistant", systemImage: "sparkles") { model.isAssistantVisible.toggle() }
             }
         }
-        .disabled(model.selectedThread == nil)
     }
 
     private func isExpanded(_ item: MessageWithAttachments) -> Bool {

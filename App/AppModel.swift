@@ -16,10 +16,25 @@ final class AppModel {
     var labels: [MailLabel] = []
     var messageCounts: [String: Int] = [:]
     var threads: [MailThread] = []
+    var selectedThreadDetail: MailThread?
     var selectedMessages: [MessageWithAttachments] = []
     var compose: ComposeRequest?
     var errorMessage: String?
     var isAddingAccount = false
+    var indexStatus: IndexStatus?
+    var hasAnthropicKey = false
+    var hasVoyageKey = false
+    var codexStatus: CodexStatus?
+    var assistantEngine: AssistantEngine = AppModel.savedEngine {
+        didSet {
+            guard assistantEngine != oldValue else { return }
+            UserDefaults.standard.set(assistantEngine.rawValue, forKey: Self.engineKey)
+            assistant.reset()
+        }
+    }
+    var isAssistantVisible = false
+    var isPaletteVisible = false
+    let assistant = AssistantModel()
 
     var mailbox: Mailbox? = .allInboxes {
         didSet {
@@ -38,9 +53,15 @@ final class AppModel {
     }
 
     private static let pageSize = 200
+    private static let engineKey = "assistantEngine"
+
+    private static var savedEngine: AssistantEngine {
+        UserDefaults.standard.string(forKey: engineKey).flatMap(AssistantEngine.init) ?? .codex
+    }
     private var threadLimit = AppModel.pageSize
     private var threadsTask: Task<Void, Never>?
     private var messagesTask: Task<Void, Never>?
+    private var threadDetailTask: Task<Void, Never>?
     private var addAccountTask: Task<Void, Never>?
 
     private init(launchState: LaunchState) {
@@ -71,7 +92,7 @@ final class AppModel {
         return GoogleOAuthConfig(clientID: id, clientSecret: secret)
     }
 
-    private var service: MailService? {
+    var service: MailService? {
         if case let .ready(service) = launchState { return service }
         return nil
     }
@@ -83,6 +104,9 @@ final class AppModel {
         }
         observe(service.store.observeLabels()) { $0.labels = $1 }
         observe(service.store.observeMessageCounts()) { $0.messageCounts = $1 }
+        observe(service.store.observeIndexStatus()) { $0.indexStatus = $1 }
+        refreshKeyState()
+        refreshCodexStatus()
         observeThreads()
         perform { try await service.start() }
     }
@@ -117,11 +141,18 @@ final class AppModel {
 
     private func observeSelectedThread() {
         messagesTask?.cancel()
+        threadDetailTask?.cancel()
         selectedMessages = []
+        selectedThreadDetail = nil
         guard let service, let ref = selectedThread else { return }
         messagesTask = observe(service.store.observeMessages(in: ref)) { $0.selectedMessages = $1 }
-        if threads.first(where: { $0.ref == ref })?.isUnread == true {
-            perform { try await service.setUnread(false, ref) }
+        var isFirstValue = true
+        threadDetailTask = observe(service.store.observeThread(ref)) { model, thread in
+            model.selectedThreadDetail = thread
+            if isFirstValue, thread?.isUnread == true {
+                model.perform { try await service.setUnread(false, ref) }
+            }
+            isFirstValue = false
         }
     }
 
@@ -169,8 +200,7 @@ final class AppModel {
     // MARK: Thread actions
 
     var selectedThreadSummary: MailThread? {
-        guard let selectedThread else { return nil }
-        return threads.first { $0.ref == selectedThread }
+        selectedThreadDetail
     }
 
     func archiveSelection() {
@@ -236,6 +266,54 @@ final class AppModel {
             let url = try await service.download(attachment)
             await MainActor.run { _ = NSWorkspace.shared.open(url) }
         }
+    }
+
+    // MARK: Search and assistant
+
+    func search(_ query: String) async throws -> [SearchHit] {
+        guard let service else { return [] }
+        return try await service.search(query, limit: 25)
+    }
+
+    func open(_ ref: ThreadRef) {
+        selectedThread = ref
+    }
+
+    func openCitation(_ key: String) {
+        guard let target = assistant.citations[key] else { return }
+        selectedThread = target.threadRef
+    }
+
+    /// Whether the chosen engine looks usable. Codex's sign-in is only known for sure when a request runs.
+    var canUseAssistant: Bool {
+        switch assistantEngine {
+        case .codex: codexStatus?.executable != nil
+        case .anthropicAPI: hasAnthropicKey
+        }
+    }
+
+    func ask(_ question: String) {
+        guard let service else { return }
+        isAssistantVisible = true
+        let context = AssistantContext(accountIDs: accounts.map(\.id), viewing: selectedThread)
+        assistant.send(question, context: context, engine: assistantEngine, service: service)
+    }
+
+    func refreshCodexStatus() {
+        guard let service else { return }
+        Task { codexStatus = await service.codexStatus() }
+    }
+
+    func refreshKeyState() {
+        hasAnthropicKey = service?.hasAPIKey(.anthropic) ?? false
+        hasVoyageKey = service?.hasAPIKey(.voyage) ?? false
+    }
+
+    func saveAPIKey(_ key: String, for kind: APIKeyKind) async throws {
+        guard let service else { return }
+        try await service.setAPIKey(key, for: kind)
+        refreshKeyState()
+        if kind == .anthropic { assistant.reset() }
     }
 
     private func perform(_ work: @escaping @Sendable () async throws -> Void) {

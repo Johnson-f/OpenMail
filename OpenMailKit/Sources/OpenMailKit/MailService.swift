@@ -1,27 +1,41 @@
 import Foundation
 
+public enum AssistantEngine: String, Sendable, CaseIterable {
+    /// The user's own Codex install, billed to their ChatGPT plan.
+    case codex
+    /// An Anthropic API key entered in Settings.
+    case anthropicAPI
+}
+
 public actor MailService {
     public nonisolated let store: MailStore
     private let oauth: GoogleOAuth
     private let tokenStore: any TokenStore
-    private let transport: any HTTPTransport
+    private let apiKeys: any APIKeyStore
+    private let transport: URLSessionTransport
+    private let vectors: VectorIndex
     private var clients: [String: any GmailAPI] = [:]
     private var syncs: [String: AccountSync] = [:]
+    private var indexer: EmbeddingIndexer?
 
     public init(
         config: GoogleOAuthConfig,
         store: MailStore,
         tokenStore: any TokenStore = KeychainTokenStore(),
-        transport: any HTTPTransport = URLSessionTransport()
+        apiKeys: any APIKeyStore = KeychainAPIKeyStore(),
+        transport: URLSessionTransport = URLSessionTransport()
     ) {
         self.store = store
         self.oauth = GoogleOAuth(config: config, transport: transport)
         self.tokenStore = tokenStore
+        self.apiKeys = apiKeys
         self.transport = transport
+        self.vectors = VectorIndex(store: store)
     }
 
-    /// Resumes syncing every account that has a stored refresh token.
+    /// Resumes syncing every account that has a stored refresh token, and background indexing.
     public func start() async throws {
+        restartIndexer()
         for account in try await store.accounts() {
             guard let refreshToken = try tokenStore.refreshToken(for: account.id) else {
                 try await store.updateAccount(account.id) { $0.needsReauth = true }
@@ -106,6 +120,68 @@ public actor MailService {
         let url = directory.appending(path: safeName.isEmpty ? "attachment" : safeName)
         try data.write(to: url)
         return url
+    }
+
+    // MARK: Search and assistant
+
+    public nonisolated func hasAPIKey(_ kind: APIKeyKind) -> Bool {
+        (try? apiKeys.key(kind)) != nil
+    }
+
+    /// Checks the key with a cheap request, then stores it in the Keychain. An empty key removes it.
+    public func setAPIKey(_ key: String, for kind: APIKeyKind) async throws {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            switch kind {
+            case .anthropic: try await ClaudeClient(apiKey: trimmed, transport: transport).validateKey(using: transport)
+            case .voyage: _ = try await VoyageClient(apiKey: trimmed, transport: transport).embed(["OpenMail"], inputType: .query)
+            }
+        }
+        try apiKeys.setKey(trimmed, for: kind)
+        if kind == .voyage { restartIndexer() }
+    }
+
+    public func search(_ query: String, filters: SearchFilters = SearchFilters(), limit: Int = 20) async throws -> [SearchHit] {
+        try await mailSearch().search(query, filters: filters, limit: limit)
+    }
+
+    public func makeAssistant(engine: AssistantEngine) async throws -> any AssistantBackend {
+        let toolbox = MailToolbox(store: store, search: mailSearch())
+        switch engine {
+        case .codex:
+            guard let cli = await CodexCLI.locate() else { throw CodexError.notInstalled }
+            return CodexSession(cli: cli, toolbox: toolbox, directory: Self.codexDirectory)
+        case .anthropicAPI:
+            guard let key = try apiKeys.key(.anthropic) else { throw ClaudeError.missingAPIKey }
+            return AssistantSession(client: ClaudeClient(apiKey: key, transport: transport), toolbox: toolbox)
+        }
+    }
+
+    public nonisolated func codexStatus() async -> CodexStatus {
+        guard let cli = await CodexCLI.locate() else {
+            return CodexStatus(executable: nil, isLoggedIn: false, problem: CodexError.notInstalled.errorDescription)
+        }
+        return await cli.status()
+    }
+
+    /// A folder owned by OpenMail, so Codex never picks up a project's AGENTS.md or config.
+    private static var codexDirectory: URL {
+        URL.applicationSupportDirectory.appending(path: "OpenMail/Codex")
+    }
+
+    private func mailSearch() -> MailSearch {
+        let embeddings = (try? apiKeys.key(.voyage)).flatMap { $0 }.map { VoyageClient(apiKey: $0, transport: transport) }
+        return MailSearch(store: store, vectors: vectors, embeddings: embeddings)
+    }
+
+    private func restartIndexer() {
+        let previous = indexer
+        indexer = nil
+        Task { await previous?.stop() }
+        guard let key = try? apiKeys.key(.voyage) else { return }
+        let indexer = EmbeddingIndexer(store: store, provider: VoyageClient(apiKey: key, transport: transport))
+        self.indexer = indexer
+        Task { await indexer.start() }
     }
 
     // MARK: Private

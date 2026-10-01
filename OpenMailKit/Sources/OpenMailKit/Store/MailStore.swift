@@ -101,6 +101,7 @@ public final class MailStore: Sendable {
             }
             try db.create(index: "threadLabels_label", on: "threadLabels", columns: ["labelID", "accountID"])
         }
+        registerSearchMigrations(&migrator)
         return migrator
     }
 }
@@ -162,13 +163,22 @@ extension MailStore {
             for item in parsed {
                 var message = item.message
                 message.syncGeneration = generation
-                if var existing = try Message.fetchOne(db, key: ["accountID": message.accountID, "id": message.id]),
-                   HistoryID(existing.historyID) > HistoryID(message.historyID) {
+                let existing = try Message.fetchOne(db, key: ["accountID": message.accountID, "id": message.id])
+                if var existing, HistoryID(existing.historyID) > HistoryID(message.historyID) {
                     existing.syncGeneration = max(existing.syncGeneration, generation)
                     try existing.update(db)
                     continue
                 }
+                let isNew = existing == nil
                 try message.upsert(db)
+                if isNew {
+                    let rowID = try Int64.fetchOne(
+                        db,
+                        sql: "SELECT rowid FROM messages WHERE accountID = ? AND id = ?",
+                        arguments: [message.accountID, message.id]
+                    )!
+                    try Self.indexForSearch(message, rowID: rowID, db: db)
+                }
                 try Attachment
                     .filter(Column("accountID") == message.accountID && Column("messageID") == message.id)
                     .deleteAll(db)
@@ -306,6 +316,13 @@ extension MailStore {
     public func observeThreads(in mailbox: Mailbox, limit: Int) -> AsyncValueObservation<[MailThread]> {
         ValueObservation
             .tracking { try Self.threads(in: mailbox, limit: limit, db: $0) }
+            .removeDuplicates()
+            .values(in: db)
+    }
+
+    public func observeThread(_ ref: ThreadRef) -> AsyncValueObservation<MailThread?> {
+        ValueObservation
+            .tracking { try MailThread.fetchOne($0, key: ["accountID": ref.accountID, "id": ref.threadID]) }
             .removeDuplicates()
             .values(in: db)
     }

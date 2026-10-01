@@ -89,27 +89,36 @@ Hybrid search, entirely on the Mac apart from embedding the query:
 2. **Semantic:** the query is embedded with Voyage and compared by cosine similarity against chunk embeddings using Accelerate (`vDSP`), all in memory. This is fast enough for hundreds of thousands of chunks without a vector database.
 3. **Fusion:** reciprocal rank fusion merges the two lists.
 
+Embeddings use `voyage-4` at 512 dimensions, which keeps the in-memory index small (about 2 KB per passage). API keys for Anthropic and Voyage are entered in Settings and stored in the Keychain.
+
 **Indexing:** each message is split into chunks (whole message if short, otherwise paragraph-based spans of about 400 tokens, with quoted replies and signatures stripped). Chunks are embedded with Voyage in batches as messages sync. Each chunk records its embedding model so the index can be rebuilt if the model changes.
 
 ### AI
 
-All calls go directly to the Claude API, using the user's own API key stored in the Keychain.
+The assistant can run on either of two engines, chosen in Settings:
+
+- **Codex (default):** OpenMail runs the user's installed `codex exec --json`, so usage counts against their ChatGPT plan. OpenMail never touches their OpenAI credentials, and API key variables are removed from Codex's environment. The mail tools are served to it from a private MCP server on 127.0.0.1, protected by a random bearer token passed in an environment variable. Codex runs with a read-only sandbox, `approval_policy = "never"`, web search off, and its shell, browser, computer-use, apps, plugins, memory and hooks features disabled. It ignores the user's `config.toml` and execpolicy rules, and its built-in coding instructions are replaced with OpenMail's assistant prompt. Follow-up turns resume the same Codex thread.
+- **Anthropic API key:** direct Messages API calls with a key stored in the Keychain.
+
+Background jobs (triage, briefing) use an API key, so they don't consume the user's plan limits.
 
 | Job | Model | When |
 |---|---|---|
 | Triage: category, summary, deadlines, tasks | Haiku 4.5 | Each new thread or thread update, plus the last 30 days on first sync |
 | Suggested reply | Sonnet 5.5 | Threads triaged as Needs reply |
-| Assistant chat and ⌘K | Sonnet 5.5 | On request |
+| Assistant chat and ⌘K | Codex default model, or Sonnet 5.5 with an API key | On request |
 | Morning briefing | Sonnet 5.5 | First launch each day |
 
 Triage returns structured JSON that is validated before it is stored.
 
-**Assistant tools** (Claude tool use):
+**Assistant tools** (Claude tool use). Every message the assistant sees gets a short citation key such as `M3`, which it uses to cite sources and to refer to messages in later tool calls:
 
-- `search_mail(query, account?, from?, after?, before?)` returns ranked excerpts with message IDs.
-- `get_thread(thread_id)` returns the full thread text.
-- `list_threads(category?, after?, before?)` lists threads by AI group or date.
-- `propose_reply(thread_id, instructions)` returns a draft that the UI shows for the user to edit and send.
+- `search_mail(query, from?, after?, before?, limit?)` returns ranked excerpts with citation keys.
+- `get_thread(message_key)` returns the full conversation that message belongs to.
+- `list_threads(mailbox?, unread_only?, after?, before?, limit?)` lists recent conversations.
+- `draft_email(body, reply_to?, reply_all?, to?, subject?)` returns a draft that the UI shows for the user to edit and send.
+
+The conversation history is append-only, so Claude's thinking blocks stay valid from turn to turn. A failed or refused turn is removed whole. Requests opt into server-side refusal fallback (`fallbacks: "default"`).
 
 The assistant has no tools that send, archive, delete or label mail. Every such action is a button the user clicks. This is also the main defense against prompt injection: email content is only ever passed to Claude as data, and even a malicious email has no way to make it act.
 

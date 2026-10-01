@@ -40,6 +40,7 @@ struct MailView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         NavigationSplitView {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230)
@@ -48,6 +49,13 @@ struct MailView: View {
                 .navigationSplitViewColumnWidth(min: 300, ideal: 360)
         } detail: {
             ThreadDetailView()
+                .inspector(isPresented: $model.isAssistantVisible) {
+                    AssistantPanel()
+                        .inspectorColumnWidth(min: 300, ideal: 380, max: 560)
+                }
+        }
+        .sheet(isPresented: $model.isPaletteVisible) {
+            CommandPalette()
         }
     }
 }

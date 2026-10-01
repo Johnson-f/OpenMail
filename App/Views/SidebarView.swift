@@ -35,13 +35,16 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
-            Button {
-                model.addAccount()
-            } label: {
-                Label(model.isAddingAccount ? "Waiting for browser…" : "Add Account", systemImage: "plus")
+            VStack(alignment: .leading, spacing: 8) {
+                SearchIndexStatusView()
+                Button {
+                    model.addAccount()
+                } label: {
+                    Label(model.isAddingAccount ? "Waiting for browser…" : "Add Account", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isAddingAccount)
             }
-            .buttonStyle(.borderless)
-            .disabled(model.isAddingAccount)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
         }
@@ -58,6 +61,34 @@ struct SidebarView: View {
 
     private func userLabels(for accountID: String) -> [MailLabel] {
         model.labels.filter { $0.accountID == accountID && !$0.isSystem }
+    }
+}
+
+private struct SearchIndexStatusView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        if !model.hasVoyageKey {
+            Button("Enable semantic search…") { openSettings() }
+                .buttonStyle(.link)
+                .font(.caption)
+        } else if let status = model.indexStatus {
+            if let error = status.lastError {
+                Label("Indexing paused", systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(error)
+            } else if status.pendingChunks > 0 {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Indexing for search… \(status.embeddedChunks.formatted()) of \(status.totalChunks.formatted())")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ProgressView(value: Double(status.embeddedChunks + status.failedChunks), total: Double(max(status.totalChunks, 1)))
+                        .controlSize(.small)
+                }
+            }
+        }
     }
 }
 
