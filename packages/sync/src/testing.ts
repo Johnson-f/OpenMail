@@ -1,10 +1,12 @@
-import type { Label, MailStore, OutboxRow, StoredMessage } from '@gmail/core'
+import type { Label, MailEventContext, MailStore, OutboxRow, StoredMessage } from '@gmail/core'
 
 type Account = {
   historyId: string | null
   backfillComplete: boolean
   backfillPageToken: string | null
 }
+
+type OutboxEntry = OutboxRow & { accountId: number; status: string }
 
 /**
  * In-memory MailStore for testing the sync engine without SQLite.
@@ -15,9 +17,11 @@ type Account = {
  */
 export class FakeMailStore implements MailStore {
   private accounts = new Map<number, Account>()
+  private epochs = new Map<number, number>()
+  private seenEpoch = new Map<string, number>()
   private messages = new Map<string, StoredMessage>()
   private labels = new Map<number, Label[]>()
-  private outbox: (OutboxRow & { accountId: number; status: string })[] = []
+  private outbox: OutboxEntry[] = []
   private nextOutboxId = 1
 
   constructor(accountIds: number[] = [1]) {
@@ -40,20 +44,51 @@ export class FakeMailStore implements MailStore {
     return a
   }
 
-  upsertMessage(accountId: number, msg: StoredMessage): void {
-    this.messages.set(this.key(accountId, msg.id), {
-      ...msg,
-      labelIds: [...msg.labelIds],
-    })
+  readonly events: Array<{ accountId: number; messageId: string; event: MailEventContext }> = []
+
+  upsertMessage(accountId: number, msg: StoredMessage, event?: MailEventContext): void {
+    const key = this.key(accountId, msg.id)
+    const labels = new Set(msg.labelIds)
+    for (const row of this.outbox) {
+      if (row.accountId !== accountId || row.messageId !== msg.id) continue
+      if (row.status !== 'pending' && row.status !== 'failed') continue
+      for (const label of row.remove) labels.delete(label)
+      for (const label of row.add) labels.add(label)
+    }
+    this.messages.set(key, { ...msg, labelIds: [...labels] })
+    this.seenEpoch.set(key, this.epochs.get(accountId) ?? 0)
+    if (event) this.events.push({ accountId, messageId: msg.id, event })
   }
 
-  deleteMessage(accountId: number, messageId: string): void {
+  deleteMessage(accountId: number, messageId: string, event?: MailEventContext): void {
     this.messages.delete(this.key(accountId, messageId))
+    this.seenEpoch.delete(this.key(accountId, messageId))
+    if (event) this.events.push({ accountId, messageId, event })
   }
 
   getMessage(accountId: number, messageId: string): StoredMessage | null {
     const m = this.messages.get(this.key(accountId, messageId))
     return m ? { ...m, labelIds: [...m.labelIds] } : null
+  }
+
+  beginResync(accountId: number): void {
+    this.epochs.set(accountId, (this.epochs.get(accountId) ?? 0) + 1)
+  }
+
+  sweepUnseen(accountId: number): void {
+    const epoch = this.epochs.get(accountId) ?? 0
+    for (const [key, message] of [...this.messages]) {
+      if (!key.startsWith(`${accountId}:`) || (this.seenEpoch.get(key) ?? 0) >= epoch) continue
+      this.deleteMessage(accountId, message.id, {
+        eventKey: `resync:${accountId}:${epoch}:${message.id}`,
+        origin: 'reconciliation',
+      })
+      for (const row of this.outbox) {
+        if (row.accountId === accountId && row.messageId === message.id && row.status !== 'uploaded') {
+          row.status = 'abandoned'
+        }
+      }
+    }
   }
 
   upsertLabels(accountId: number, labels: Label[]): void {
@@ -87,6 +122,13 @@ export class FakeMailStore implements MailStore {
   enqueue(accountId: number, messageId: string, add: string[], remove: string[]): number {
     const id = this.nextOutboxId++
     this.outbox.push({ id, accountId, messageId, add, remove, attempts: 0, status: 'pending' })
+    const message = this.messages.get(this.key(accountId, messageId))
+    if (message) {
+      const labels = new Set(message.labelIds)
+      for (const label of remove) labels.delete(label)
+      for (const label of add) labels.add(label)
+      message.labelIds = [...labels]
+    }
     return id
   }
 
@@ -97,7 +139,7 @@ export class FakeMailStore implements MailStore {
       .map(({ id, messageId, add, remove, attempts }) => ({ id, messageId, add, remove, attempts }))
   }
 
-  private row(id: number): (OutboxRow & { accountId: number; status: string }) | undefined {
+  private row(id: number): OutboxEntry | undefined {
     return this.outbox.find((r) => r.id === id)
   }
 

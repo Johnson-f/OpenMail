@@ -1,0 +1,19 @@
+{
+  "name": "@gmail/intelligence",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@gmail/core": "*",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.2",
+    "pdfjs-dist": "^6.3.289",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@gmail/tsconfig": "*"
+  }
+}

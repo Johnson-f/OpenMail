@@ -1,5 +1,5 @@
 import type { MailStore } from '@gmail/core'
-import type { GmailApi } from '@gmail/gmail'
+import { MessageNotFoundError, type GmailApi } from '@gmail/gmail'
 
 export type DrainOptions = { maxAttempts?: number }
 export type DrainResult = { uploaded: number; failed: number }
@@ -32,11 +32,39 @@ export async function drainOutbox(
       uploaded += 1
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      if (row.attempts + 1 >= maxAttempts) store.abandonOutbox(row.id, message)
-      else store.markOutboxFailed(row.id, message)
+      if (err instanceof MessageNotFoundError || row.attempts + 1 >= maxAttempts) {
+        store.abandonOutbox(row.id, message)
+        await restoreRemoteState(store, accountId, gmail, row.id, row.messageId)
+      } else {
+        store.markOutboxFailed(row.id, message)
+      }
       failed += 1
     }
   }
 
   return { uploaded, failed }
+}
+
+/** An abandoned change was applied locally already; bring the message back to Gmail's state. */
+async function restoreRemoteState(
+  store: MailStore,
+  accountId: number,
+  gmail: GmailApi,
+  rowId: number,
+  messageId: string,
+): Promise<void> {
+  const event = {
+    eventKey: `reconcile:${accountId}:${rowId}:${messageId}`,
+    origin: 'reconciliation' as const,
+    payload: { type: 'outboxAbandoned' },
+  }
+  try {
+    store.upsertMessage(accountId, await gmail.getMessage(messageId), event)
+  } catch (err) {
+    if (err instanceof MessageNotFoundError) {
+      if (store.getMessage(accountId, messageId)) store.deleteMessage(accountId, messageId, event)
+      return
+    }
+    // The next sync re-reads the message; a failed refresh must not fail the drain.
+  }
 }

@@ -5,6 +5,8 @@
     { "path": "./packages/gmail" },
     { "path": "./packages/sync" },
     { "path": "./packages/ui" },
+    { "path": "./packages/intelligence" },
+    { "path": "./packages/agent" },
     { "path": "./apps/desktop" }
   ]
 }

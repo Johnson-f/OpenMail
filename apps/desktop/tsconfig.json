@@ -7,9 +7,11 @@
     "types": ["node", "vitest/globals"],
     "paths": {
       "@gmail/core": ["../../packages/core/src/index.ts"],
+      "@gmail/agent": ["../../packages/agent/src/index.ts"],
       "@gmail/gmail": ["../../packages/gmail/src/index.ts"],
       "@gmail/sync": ["../../packages/sync/src/index.ts"],
       "@gmail/ui": ["../../packages/ui/src/index.ts"],
+      "@gmail/intelligence": ["../../packages/intelligence/src/index.ts"],
       "@/*": ["./src/renderer/*"]
     }
   },

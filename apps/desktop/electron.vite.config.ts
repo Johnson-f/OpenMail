@@ -10,19 +10,34 @@ export default defineConfig({
     // Keeps better-sqlite3 and googleapis as real Node requires instead of
     // bundling them. Native modules cannot be bundled; removing this breaks
     // the build in a confusing way.
-    plugins: [externalizeDepsPlugin({ exclude: ['@gmail/core', '@gmail/gmail', '@gmail/sync'] })],
-    build: { rollupOptions: { input: r('src/main/index.ts') } },
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ['@gmail/core', '@gmail/gmail', '@gmail/sync', '@gmail/intelligence', '@gmail/agent'],
+      }),
+    ],
+    build: {
+      rollupOptions: {
+        input: { index: r('src/main/index.ts'), background: r('src/background/index.ts') },
+      },
+    },
     resolve: {
       alias: {
         '@gmail/core': r('../../packages/core/src/index.ts'),
+        '@gmail/agent': r('../../packages/agent/src/index.ts'),
         '@gmail/gmail': r('../../packages/gmail/src/index.ts'),
         '@gmail/sync': r('../../packages/sync/src/index.ts'),
+        '@gmail/intelligence': r('../../packages/intelligence/src/index.ts'),
       },
     },
   },
   preload: {
     plugins: [externalizeDepsPlugin({ exclude: ['@gmail/core'] })],
-    build: { rollupOptions: { input: r('src/preload/index.ts') } },
+    build: {
+      rollupOptions: {
+        input: r('src/preload/index.ts'),
+        output: { format: 'cjs', entryFileNames: 'index.cjs' },
+      },
+    },
     resolve: {
       alias: { '@gmail/core': r('../../packages/core/src/index.ts') },
     },

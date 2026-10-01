@@ -1,5 +1,6 @@
 import type { OutboxRow } from '@gmail/core'
 import type { Db } from './index.js'
+import { applyLabelChange } from './messages.js'
 
 export function enqueue(
   db: Db,
@@ -15,47 +16,31 @@ export function enqueue(
     throw new Error('add and remove label sets must not overlap')
   }
 
-  const info = db
-    .prepare(
-      `INSERT INTO outbox (account_id, message_id, add_labels, remove_labels, status, attempts, created_at)
-       VALUES (?, ?, ?, ?, 'pending', 0, ?)`
-    )
-    .run(accountId, messageId, JSON.stringify(add), JSON.stringify(remove), Date.now())
-
-  return Number(info.lastInsertRowid)
+  const addJson = JSON.stringify(add)
+  const removeJson = JSON.stringify(remove)
+  const tx = db.transaction((): number => {
+    const info = db
+      .prepare(
+        `INSERT INTO outbox (account_id, message_id, add_labels, remove_labels, status, attempts, created_at)
+         VALUES (?, ?, ?, ?, 'pending', 0, ?)`
+      )
+      .run(accountId, messageId, addJson, removeJson, Date.now())
+    const exists = db.prepare(`SELECT 1 FROM messages WHERE account_id = ? AND id = ?`).get(accountId, messageId)
+    if (exists) applyLabelChange(db, accountId, messageId, [{ add_labels: addJson, remove_labels: removeJson }])
+    return Number(info.lastInsertRowid)
+  })
+  return tx()
 }
 
 /**
- * The conflict rule: start from the stored labels, then replay every
- * pending/failed outbox row for this message in id order (removes then
- * adds). Incremental sync overwrites `message_labels` with Gmail's state at
- * any moment; because local changes are replayed on top rather than merged
- * into that row, a sync can never clobber a change that hasn't uploaded
- * yet. This is only safe because Gmail label ops are idempotent set
- * operations. Abandoned rows are excluded — they are no longer replayed.
+ * Labels already include unuploaded local changes: `enqueue` applies them
+ * and `upsertMessage` replays them over Gmail's labels.
  */
 export function effectiveLabels(db: Db, accountId: number, messageId: string): string[] {
-  const storedRows = db
-    .prepare(`SELECT label_id FROM message_labels WHERE account_id = ? AND message_id = ?`)
+  const rows = db
+    .prepare(`SELECT label_id FROM message_labels WHERE account_id = ? AND message_id = ? ORDER BY label_id ASC`)
     .all(accountId, messageId) as { label_id: string }[]
-  const labels = new Set(storedRows.map((r) => r.label_id))
-
-  const outboxRows = db
-    .prepare(
-      `SELECT add_labels, remove_labels FROM outbox
-       WHERE account_id = ? AND message_id = ? AND status IN ('pending', 'failed')
-       ORDER BY id ASC`
-    )
-    .all(accountId, messageId) as { add_labels: string; remove_labels: string }[]
-
-  for (const row of outboxRows) {
-    const removes: string[] = JSON.parse(row.remove_labels)
-    const adds: string[] = JSON.parse(row.add_labels)
-    for (const label of removes) labels.delete(label)
-    for (const label of adds) labels.add(label)
-  }
-
-  return Array.from(labels).sort()
+  return rows.map((r) => r.label_id)
 }
 
 type OutboxTableRow = {

@@ -12,7 +12,14 @@
     "build": "npm run build --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --build --verbose"
+    "test:tz": "TZ=Pacific/Auckland vitest run apps/desktop/src/main/automation && TZ=UTC vitest run apps/desktop/src/main/automation",
+    "eval:retrieval": "vitest run packages/intelligence/src/retrieval.eval.test.ts apps/desktop/src/main/ai/knowledge-repository.eval.test.ts",
+    "test:e2e": "vitest run apps/desktop/src/main/ai/end-to-end.test.ts",
+    "live:smoke": "vitest run apps/desktop/src/main/ai/live-smoke.test.ts",
+    "package:mac": "npm run package:mac --workspace @gmail/desktop",
+    "audit:production": "npm audit --omit=dev",
+    "typecheck": "tsc --build --verbose",
+    "bench:threads": "node apps/desktop/scripts/bench-list-threads.mts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -22,9 +29,15 @@
   },
   "allowScripts": {
     "better-sqlite3@13.0.2": true,
+    "better-sqlite3@12.11.1": true,
     "electron@43.2.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.1": true,
-    "@swc/core@1.15.47": true
+    "@swc/core@1.15.47": true,
+    "tesseract.js@7.0.0": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "overrides": {
+    "nanoid": "3.3.18"
   }
 }

@@ -8,6 +8,11 @@ import {
   Tag,
   Trash2,
   TriangleAlert,
+  Bot,
+  Database,
+  Settings,
+  ShieldCheck,
+  Workflow,
 } from 'lucide-react'
 import type { AccountRow, MailboxCounts } from '@gmail/core'
 import { cn } from '@gmail/ui'
@@ -44,7 +49,24 @@ type Props = {
   countsByAccount: Record<number, MailboxCounts[]>
   selected: { accountId: number; labelId: string } | null
   onSelect: (accountId: number, labelId: string) => void
+  onReauthenticate: (accountId: number) => void
+  activeView: IntelligenceView | 'mail'
+  onView: (view: IntelligenceView) => void
 }
+
+export type IntelligenceView = 'assistant' | 'approvals' | 'automations' | 'knowledge' | 'settings'
+
+const INTELLIGENCE: Array<{
+  id: IntelligenceView
+  label: string
+  Icon: ComponentType<{ className?: string; strokeWidth?: number }>
+}> = [
+  { id: 'assistant', label: 'Assistant', Icon: Bot },
+  { id: 'approvals', label: 'Approvals', Icon: ShieldCheck },
+  { id: 'automations', label: 'Automations', Icon: Workflow },
+  { id: 'knowledge', label: 'Knowledge', Icon: Database },
+  { id: 'settings', label: 'Settings', Icon: Settings },
+]
 
 function MailboxRow({
   labelId,
@@ -88,7 +110,15 @@ function MailboxRow({
   )
 }
 
-export function Sidebar({ accounts, countsByAccount, selected, onSelect }: Props) {
+export function Sidebar({
+  accounts,
+  countsByAccount,
+  selected,
+  onSelect,
+  onReauthenticate,
+  activeView,
+  onView,
+}: Props) {
   return (
     <nav
       aria-label="Mailboxes"
@@ -97,6 +127,27 @@ export function Sidebar({ accounts, countsByAccount, selected, onSelect }: Props
       {/* Spacer for the inset traffic lights. The window is frameless, so
           without this the first row sits underneath the close button. */}
       <div className="drag h-[52px] shrink-0" />
+
+      <section className="px-2 pb-2">
+        <h2 className="px-2 pb-1 pt-2 text-2xs font-medium text-text-secondary">Intelligence</h2>
+        <div className="flex flex-col gap-px">
+          {INTELLIGENCE.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => onView(id)}
+              className={cn(
+                'flex h-[26px] w-full items-center gap-2 rounded-[var(--radius-row)] px-2 text-sm',
+                activeView === id
+                  ? 'bg-accent-fill font-medium'
+                  : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]',
+              )}
+            >
+              <Icon className="size-[15px] text-accent" strokeWidth={1.75} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      </section>
 
       {accounts.map((account) => {
         const counts = countsByAccount[account.id] ?? []
@@ -119,7 +170,12 @@ export function Sidebar({ accounts, countsByAccount, selected, onSelect }: Props
               ))}
             </div>
             {account.needsReauth && (
-              <p className="mt-1 px-2 text-2xs text-danger">Sign in again to keep syncing</p>
+              <button
+                onClick={() => onReauthenticate(account.id)}
+                className="mt-1 w-full rounded-control px-2 py-1 text-left text-2xs text-danger hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+              >
+                Sign in again to keep syncing
+              </button>
             )}
           </section>
         )

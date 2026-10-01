@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { FakeGmail } from './fake'
-import { HistoryExpiredError } from './types'
+import { HistoryExpiredError, MessageNotFoundError, UncertainSendError } from './types'
 
 describe('FakeGmail', () => {
   let gmail: FakeGmail
@@ -101,5 +101,78 @@ describe('FakeGmail', () => {
     const again = await gmail.getMessage('m1')
     expect(again.labelIds).toEqual(['INBOX'])
     expect(again.to).toEqual(['a@example.com'])
+  })
+
+  it('round-trips attachment bytes defensively', async () => {
+    gmail.seedMessage({ id: 'm1' })
+    gmail.seedAttachment('m1', 'a1', Buffer.from('secret'))
+
+    const first = await gmail.getAttachment('m1', 'a1')
+    first[0] = 0
+    expect(Buffer.from(await gmail.getAttachment('m1', 'a1')).toString()).toBe('secret')
+  })
+
+  it('creates, updates, sends and reconciles a draft', async () => {
+    const draft = await gmail.createDraft({
+      to: ['a@example.com'],
+      subject: 'First',
+      bodyText: 'Body',
+      messageId: 'draft-send@openmail.local',
+    })
+    await gmail.updateDraft(draft.id, {
+      to: ['a@example.com'],
+      subject: 'Updated',
+      bodyText: 'Updated body',
+      messageId: 'draft-send@openmail.local',
+    })
+
+    const sent = await gmail.sendDraft(draft.id)
+    expect(sent.rfcMessageId).toBe('draft-send@openmail.local')
+    expect((await gmail.findByRfcMessageId(sent.rfcMessageId))?.subject).toBe('Updated')
+  })
+
+  it('marks a failed send as uncertain and never applies it', async () => {
+    gmail.failNextSend(new Error('connection dropped'))
+    await expect(
+      gmail.sendMessage({
+        to: ['a@example.com'],
+        subject: 'Do not duplicate',
+        bodyText: 'Body',
+        messageId: 'uncertain@openmail.local',
+      }),
+    ).rejects.toMatchObject({ name: 'UncertainSendError' })
+    expect(await gmail.findByRfcMessageId('uncertain@openmail.local')).toBeNull()
+  })
+
+  it('throws MessageNotFoundError for unknown messages', async () => {
+    await expect(gmail.getMessage('missing')).rejects.toBeInstanceOf(MessageNotFoundError)
+  })
+
+  it('records a messageDeleted history entry on permanent deletion', async () => {
+    gmail.seedMessage({ id: 'm1' })
+    const before = await gmail.getProfile()
+    gmail.deleteMessagePermanently('m1')
+    const page = await gmail.listHistory(before.historyId)
+    expect(page.changes).toEqual([{ type: 'messageDeleted', messageId: 'm1' }])
+    await expect(gmail.getMessage('m1')).rejects.toBeInstanceOf(MessageNotFoundError)
+    expect((await gmail.listMessageIds()).ids).toEqual([])
+  })
+
+  it('stores a send whose acknowledgement is lost', async () => {
+    gmail.failNextSendAfterAccept(new Error('socket hang up'))
+    await expect(
+      gmail.sendMessage({ to: ['a@b.com'], subject: 's', bodyText: 'b', messageId: 'op-1@openmail.local' }),
+    ).rejects.toBeInstanceOf(UncertainSendError)
+    expect(gmail.sendCount).toBe(1)
+    expect(await gmail.findByRfcMessageId('op-1@openmail.local')).not.toBeNull()
+  })
+
+  it('does not count a send that failed before acceptance', async () => {
+    gmail.failNextSend(new Error('offline'))
+    await expect(
+      gmail.sendMessage({ to: ['a@b.com'], subject: 's', bodyText: 'b', messageId: 'op-2@openmail.local' }),
+    ).rejects.toBeInstanceOf(UncertainSendError)
+    expect(gmail.sendCount).toBe(0)
+    expect(await gmail.findByRfcMessageId('op-2@openmail.local')).toBeNull()
   })
 })

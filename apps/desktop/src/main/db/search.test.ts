@@ -17,6 +17,10 @@ function makeMessage(overrides: Partial<StoredMessage> = {}): StoredMessage {
     bodyHtml: '<p>Attached is the quarterly report for review.</p>',
     internalDate: 1000,
     labelIds: ['INBOX'],
+    messageIdHeader: 'm1@example.com',
+    inReplyTo: '',
+    references: [],
+    attachments: [],
     ...overrides,
   }
 }

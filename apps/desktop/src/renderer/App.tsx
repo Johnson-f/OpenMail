@@ -8,9 +8,16 @@ import type {
   ThreadSummary,
 } from '@gmail/core'
 import { cn } from '@gmail/ui'
-import { MAILBOX_ORDER, Sidebar } from './components/Sidebar'
+import { MAILBOX_ORDER, Sidebar, type IntelligenceView } from './components/Sidebar'
 import { MessageList } from './components/MessageList'
 import { ReadingPane } from './components/ReadingPane'
+import { AssistantWorkspace, type AssistantSeed } from './components/AssistantWorkspace'
+import { KnowledgeView } from './components/KnowledgeView'
+import { ProviderSettings } from './components/ProviderSettings'
+import { ComposePane } from './components/ComposePane'
+import { ApprovalInbox } from './components/ApprovalInbox'
+import { AutomationCenter } from './components/AutomationCenter'
+import type { ComposeMessage } from '../main/ipc/contract'
 
 const MAILBOX_LABELS: Record<string, string> = {
   IMPORTANT: 'Important',
@@ -22,9 +29,10 @@ const MAILBOX_LABELS: Record<string, string> = {
   STARRED: 'Starred',
 }
 
-function SignIn({ onDone }: { onDone: (id: number) => void }) {
-  const [error, setError] = useState<string | null>(null)
+function SignIn({ onDone, initialError }: { onDone: (id: number) => void; initialError?: string | null }) {
+  const [error, setError] = useState<string | null>(initialError ?? null)
   const [busy, setBusy] = useState(false)
+  useEffect(() => setError(initialError ?? null), [initialError])
 
   return (
     <div className="flex h-full flex-col bg-surface">
@@ -66,6 +74,11 @@ export function App() {
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [query, setQuery] = useState('')
+  const [activeView, setActiveView] = useState<IntelligenceView | 'mail'>('mail')
+  const [assistantSeed, setAssistantSeed] = useState<AssistantSeed>()
+  const [composeInitial, setComposeInitial] = useState<Partial<ComposeMessage> | null>(null)
+  const [startupError, setStartupError] = useState<string | null>(null)
+  const [searchThreads, setSearchThreads] = useState<ThreadSummary[] | null>(null)
 
   const loadAccounts = useCallback(async () => {
     const list = await window.mail.listAccounts()
@@ -76,13 +89,15 @@ export function App() {
   }, [selected])
 
   useEffect(() => {
-    void loadAccounts()
+    void loadAccounts().catch((error: unknown) => {
+      setStartupError(error instanceof Error ? error.message : String(error))
+    })
     // Intentionally once: adding loadAccounts re-runs this on every selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Poll the local database. Sync writes to it in the background, so the UI
-  // stays a pure reader — it never waits on Gmail for anything it displays.
+  // The UI only reads the local database; main pushes `mail:changed` when
+  // anything writes to it and the slow poll covers a missed event.
   const refresh = useCallback(async () => {
     if (!selected) return
     const { accountId, labelId } = selected
@@ -100,9 +115,26 @@ export function App() {
 
   useEffect(() => {
     void refresh()
-    const handle = setInterval(() => void refresh(), 3000)
+    const handle = setInterval(() => void refresh(), 30_000)
     return () => clearInterval(handle)
   }, [refresh])
+
+  const loadMessages = useCallback(
+    async (accountId: number, id: string) => {
+      const msgs = await window.mail.threadMessages(accountId, id)
+      setMessages(msgs)
+      return msgs
+    },
+    [],
+  )
+
+  useEffect(() => {
+    if (!selected) return
+    return window.mail.onMailChanged(() => {
+      void refresh()
+      if (threadId) void loadMessages(selected.accountId, threadId)
+    })
+  }, [selected, threadId, refresh, loadMessages])
 
   // Opening a thread marks it read locally and queues the change for upload.
   useEffect(() => {
@@ -111,8 +143,7 @@ export function App() {
       return
     }
     const { accountId } = selected
-    void window.mail.threadMessages(accountId, threadId).then(async (msgs) => {
-      setMessages(msgs)
+    void loadMessages(accountId, threadId).then(async (msgs) => {
       const unread = msgs.filter((m) => m.effectiveLabelIds.includes('UNREAD'))
       if (unread.length > 0) {
         await Promise.all(
@@ -121,7 +152,7 @@ export function App() {
         void refresh()
       }
     })
-  }, [selected, threadId, refresh])
+  }, [selected, threadId, refresh, loadMessages])
 
   const act = async (add: string[], remove: string[]): Promise<void> => {
     if (!selected || messages.length === 0) return
@@ -135,19 +166,55 @@ export function App() {
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return threads
+    if (searchThreads) return searchThreads
     return threads.filter(
       (t) =>
         t.subject.toLowerCase().includes(q) ||
         t.from.toLowerCase().includes(q) ||
         t.snippet.toLowerCase().includes(q),
     )
-  }, [threads, query])
+  }, [threads, query, searchThreads])
+
+  // Local full-text results arrive first and work offline; semantic results,
+  // when an embedding provider is configured, are appended without reordering.
+  useEffect(() => {
+    const q = query.trim()
+    if (!q || !selected) {
+      setSearchThreads(null)
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void (async () => {
+        const hits = await window.mail.search(selected.accountId, q, 200).catch(() => [])
+        const merged = new Map<string, ThreadSummary>()
+        for (const hit of hits) {
+          if (merged.has(hit.threadId)) continue
+          merged.set(hit.threadId, searchSummary(hit.threadId, hit.subject, displayName(hit.from), hit.snippet, hit.internalDate))
+        }
+        if (cancelled) return
+        setSearchThreads([...merged.values()])
+        const semantic = await window.mail.semanticSearch([selected.accountId], q, 200).catch(() => [])
+        for (const hit of semantic) {
+          if (merged.has(hit.threadId)) continue
+          merged.set(hit.threadId, searchSummary(hit.threadId, hit.subject, displayName(hit.from), hit.snippet, hit.lastMessageAt))
+        }
+        if (!cancelled) setSearchThreads([...merged.values()])
+      })()
+    }, 150)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [query, selected])
 
   if (accounts.length === 0) {
-    return <SignIn onDone={() => void loadAccounts()} />
+    return <SignIn initialError={startupError} onDone={() => void loadAccounts()} />
   }
 
   const account = accounts.find((a) => a.id === selected?.accountId)
+  const ownAddress = addressOf(account?.email ?? '')
+  const isMe = (value: string) => ownAddress !== '' && addressOf(value) === ownAddress
   const mailboxName = MAILBOX_LABELS[selected?.labelId ?? 'INBOX'] ?? 'Mailbox'
   const unreadHere =
     counts[selected?.accountId ?? -1]?.find((c) => c.labelId === selected?.labelId)?.unread ?? 0
@@ -157,19 +224,49 @@ export function App() {
     : `Downloading… ${status?.backfillFetched ?? 0} messages`
 
   return (
-    <div className="flex h-full">
+    <div className="relative flex h-full">
       {sidebarOpen && (
         <Sidebar
           accounts={accounts}
           countsByAccount={counts}
-          selected={selected}
+          selected={activeView === 'mail' ? selected : null}
           onSelect={(accountId, labelId) => {
             setSelected({ accountId, labelId })
             setThreadId(null)
+            setActiveView('mail')
           }}
+          onReauthenticate={() => {
+            void window.mail.signIn().then(() => {
+              void loadAccounts()
+              void refresh()
+            })
+          }}
+          activeView={activeView}
+          onView={(view) => setActiveView(view)}
         />
       )}
 
+      {activeView === 'assistant' ? (
+        <AssistantWorkspace
+          accounts={accounts}
+          defaultAccountId={selected?.accountId ?? accounts[0]?.id ?? null}
+          seed={assistantSeed}
+          onSeedConsumed={() => setAssistantSeed(undefined)}
+          onOpenSource={(accountId, sourceThreadId) => {
+            setSelected({ accountId, labelId: 'INBOX' })
+            setThreadId(sourceThreadId)
+            setActiveView('mail')
+          }}
+        />
+      ) : activeView === 'knowledge' ? (
+        <KnowledgeView />
+      ) : activeView === 'settings' ? (
+        <ProviderSettings accountId={selected?.accountId ?? accounts[0]?.id ?? null} />
+      ) : activeView === 'approvals' ? (
+        <ApprovalInbox />
+      ) : activeView === 'automations' ? (
+        <AutomationCenter defaultAccountId={selected?.accountId ?? accounts[0]?.id ?? null} />
+      ) : (
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="drag flex h-0 shrink-0" />
         <div className="flex min-h-0 flex-1">
@@ -197,6 +294,7 @@ export function App() {
                   </button>
                   <button
                     title="New Message"
+                    onClick={() => setComposeInitial({})}
                     className="flex size-[28px] items-center justify-center rounded-control text-text-secondary hover:bg-black/[0.06] dark:hover:bg-white/[0.08]"
                   >
                     <PenSquare className="size-4" strokeWidth={1.75} />
@@ -237,12 +335,101 @@ export function App() {
                   onArchive={() => void act([], ['INBOX'])}
                   onTrash={() => void act(['TRASH'], ['INBOX'])}
                   onJunk={() => void act(['SPAM'], ['INBOX'])}
+                  onAskAI={() => {
+                    setAssistantSeed({
+                      question: 'Summarize this thread and list any decisions or action items.',
+                      threadIds: threadId ? [threadId] : [],
+                    })
+                    setActiveView('assistant')
+                  }}
+                  onReply={() => {
+                    const latest = messages.at(-1)
+                    if (!latest) return
+                    setComposeInitial({
+                      to: isMe(latest.from) ? latest.to : [latest.from],
+                      subject: prefixSubject(latest.subject, 'Re:'),
+                      bodyText: '',
+                      threadId: latest.threadId,
+                      inReplyTo: latest.messageIdHeader,
+                      references: [...latest.references, latest.messageIdHeader].filter(Boolean),
+                    })
+                  }}
+                  onReplyAll={() => {
+                    const latest = messages.at(-1)
+                    if (!latest) return
+                    setComposeInitial({
+                      to: uniqueAddresses([latest.from, ...latest.to].filter((value) => !isMe(value))),
+                      cc: uniqueAddresses(latest.cc.filter((value) => !isMe(value))),
+                      subject: prefixSubject(latest.subject, 'Re:'),
+                      bodyText: '',
+                      threadId: latest.threadId,
+                      inReplyTo: latest.messageIdHeader,
+                      references: [...latest.references, latest.messageIdHeader].filter(Boolean),
+                    })
+                  }}
+                  onForward={() => {
+                    const latest = messages.at(-1)
+                    if (!latest) return
+                    setComposeInitial({
+                      to: [],
+                      subject: prefixSubject(latest.subject, 'Fwd:'),
+                      bodyText: `\n\n---------- Forwarded message ----------\nFrom: ${latest.from}\nSubject: ${latest.subject}\n\n${latest.bodyText}`,
+                    })
+                  }}
                 />
               </div>
             </div>
           </div>
         </div>
       </div>
+      )}
+      {composeInitial && selected && (
+        <ComposePane
+          accountId={selected.accountId}
+          initial={composeInitial}
+          onClose={() => setComposeInitial(null)}
+          onPending={() => setActiveView('approvals')}
+        />
+      )}
     </div>
   )
+}
+
+function prefixSubject(subject: string, prefix: string): string {
+  return subject.toLowerCase().startsWith(prefix.toLowerCase()) ? subject : `${prefix} ${subject}`
+}
+
+function addressOf(value: string): string {
+  return (/<([^>]+)>/.exec(value)?.[1] ?? value).trim().toLowerCase()
+}
+
+function uniqueAddresses(values: string[]): string[] {
+  const seen = new Set<string>()
+  return values.filter((value) => {
+    const key = addressOf(value)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function displayName(from: string): string {
+  const match = /^\s*(.*?)\s*<([^>]+)>\s*$/.exec(from)
+  if (!match) return from.trim()
+  const name = (match[1] ?? '').replace(/^"|"$/g, '').trim()
+  return name || (match[2] ?? '').trim()
+}
+
+function searchSummary(threadId: string, subject: string, from: string, snippet: string, lastMessageAt: number): ThreadSummary {
+  return {
+    threadId,
+    subject,
+    from,
+    snippet,
+    lastMessageAt,
+    messageCount: 1,
+    unread: false,
+    starred: false,
+    hasAttachment: false,
+  }
 }

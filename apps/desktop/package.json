@@ -1,24 +1,35 @@
 {
   "name": "@gmail/desktop",
   "version": "0.0.0",
+  "description": "Local-first AI email client",
+  "author": "OpenMail",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "package:mac": "npm run build && electron-builder --mac dir",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@gmail/agent": "*",
     "@gmail/core": "*",
     "@gmail/gmail": "*",
+    "@gmail/intelligence": "*",
     "@gmail/sync": "*",
     "@gmail/ui": "*",
+    "@langchain/core": "^1.2.9",
+    "@langchain/langgraph": "^1.4.13",
+    "@langchain/langgraph-checkpoint-sqlite": "^1.0.4",
     "better-sqlite3": "^13.0.2",
+    "clsx": "^2.1.1",
     "googleapis": "^173.0.0",
     "lucide-react": "^0.500.0",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^3.0.0"
+    "openai": "^7.8.0",
+    "sqlite-vec": "^0.1.9",
+    "tailwind-merge": "^3.0.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@gmail/tsconfig": "*",
@@ -28,7 +39,8 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.2.0",
-    "electron": "^43.2.0",
+    "electron": "43.2.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

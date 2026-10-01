@@ -1,8 +1,22 @@
 import type { MailStore } from '@gmail/core'
-import { HistoryExpiredError, type GmailApi } from '@gmail/gmail'
+import { HistoryExpiredError, MessageNotFoundError, type GmailApi, type HistoryChange } from '@gmail/gmail'
 import { runBackfill } from './backfill'
 
 export type IncrementalResult = { applied: number; resynced: boolean }
+
+type CollapsedChange = { last: HistoryChange; sawAdded: boolean }
+
+function collapseByMessage(changes: HistoryChange[]): Map<string, CollapsedChange> {
+  const collapsed = new Map<string, CollapsedChange>()
+  for (const change of changes) {
+    const existing = collapsed.get(change.messageId)
+    collapsed.set(change.messageId, {
+      last: change,
+      sawAdded: (existing?.sawAdded ?? false) || change.type === 'messageAdded',
+    })
+  }
+  return collapsed
+}
 
 export async function runIncrementalSync(
   store: MailStore,
@@ -21,8 +35,11 @@ export async function runIncrementalSync(
     if (err instanceof HistoryExpiredError) {
       // Gmail keeps history for roughly 30 days. Past that the delta path is
       // gone and the only correct move is to start over.
+      store.beginResync(accountId)
       store.setBackfillComplete(accountId, false)
       store.setBackfillPageToken(accountId, null)
+      const profile = await gmail.getProfile()
+      store.setHistoryId(accountId, profile.historyId)
       await runBackfill(store, accountId, gmail)
       return { applied: 0, resynced: true }
     }
@@ -30,10 +47,16 @@ export async function runIncrementalSync(
   }
 
   let applied = 0
-  for (const change of page.changes) {
-    if (change.type === 'messageDeleted') {
-      store.deleteMessage(accountId, change.messageId)
-      applied += 1
+  for (const [messageId, { last, sawAdded }] of collapseByMessage(page.changes)) {
+    const event = {
+      eventKey: `incremental:${accountId}:${page.historyId}:${messageId}`,
+      origin: 'incremental' as const,
+      historyId: page.historyId,
+      payload: { type: last.type !== 'messageDeleted' && sawAdded ? 'messageAdded' : last.type },
+    }
+    applied += 1
+    if (last.type === 'messageDeleted') {
+      store.deleteMessage(accountId, messageId, event)
       continue
     }
 
@@ -41,8 +64,12 @@ export async function runIncrementalSync(
     // the delta blind, re-fetch: Gmail's copy is authoritative, and this is
     // the only version that stays correct when several changes to the same
     // message land in one page.
-    store.upsertMessage(accountId, await gmail.getMessage(change.messageId))
-    applied += 1
+    try {
+      store.upsertMessage(accountId, await gmail.getMessage(messageId), event)
+    } catch (err) {
+      if (!(err instanceof MessageNotFoundError)) throw err
+      store.deleteMessage(accountId, messageId, event)
+    }
   }
 
   store.setHistoryId(accountId, page.historyId)

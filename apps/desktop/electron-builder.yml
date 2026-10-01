@@ -1,0 +1,21 @@
+appId: com.openmail.desktop
+productName: OpenMail
+electronVersion: 43.2.0
+directories:
+  output: release
+files:
+  - out/**/*
+  - package.json
+asar: true
+asarUnpack:
+  - node_modules/better-sqlite3/**/*
+  - node_modules/sqlite-vec/**/*
+  - node_modules/sqlite-vec-darwin-arm64/**/*
+  - node_modules/sqlite-vec-darwin-x64/**/*
+  - node_modules/@langchain/langgraph-checkpoint-sqlite/**/*
+mac:
+  identity: null
+  category: public.app-category.productivity
+  target:
+    - dir
+npmRebuild: true

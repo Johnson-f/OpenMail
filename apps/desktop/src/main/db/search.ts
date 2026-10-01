@@ -6,6 +6,8 @@ type SearchRow = {
   threadId: string
   subject: string | null
   snippet: string | null
+  fromAddr: string | null
+  internalDate: number | null
 }
 
 /**
@@ -34,7 +36,9 @@ export function searchMessages(db: Db, accountId: number, query: string, limit: 
          m.id AS messageId,
          m.thread_id AS threadId,
          m.subject AS subject,
-         m.snippet AS snippet
+         m.snippet AS snippet,
+         m.from_addr AS fromAddr,
+         m.internal_date AS internalDate
        FROM messages_fts
        JOIN messages m ON m.rowid = messages_fts.rowid AND m.account_id = @accountId
        WHERE messages_fts MATCH @ftsQuery
@@ -48,5 +52,7 @@ export function searchMessages(db: Db, accountId: number, query: string, limit: 
     threadId: r.threadId,
     subject: r.subject ?? '',
     snippet: r.snippet ?? '',
+    from: r.fromAddr ?? '',
+    internalDate: r.internalDate ?? 0,
   }))
 }

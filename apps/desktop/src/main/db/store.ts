@@ -1,6 +1,14 @@
-import type { Label, MailStore, OutboxRow, SearchHit, StoredMessage, ThreadSummary } from '@gmail/core'
+import type {
+  Label,
+  MailEventContext,
+  MailStore,
+  OutboxRow,
+  SearchHit,
+  StoredMessage,
+  ThreadSummary,
+} from '@gmail/core'
 import type { Db } from './index.js'
-import { deleteMessage, getMessage, listThreads, upsertMessage } from './messages.js'
+import { beginResync, deleteMessage, getMessage, listThreads, sweepUnseen, upsertMessage } from './messages.js'
 import { effectiveLabels, enqueue, pendingRows, markUploaded, markFailed, abandonRow } from './outbox.js'
 import { searchMessages } from './search.js'
 
@@ -17,16 +25,24 @@ type AccountCursorRow = {
 export class SqliteMailStore implements MailStore {
   constructor(private readonly db: Db) {}
 
-  upsertMessage(accountId: number, msg: StoredMessage): void {
-    upsertMessage(this.db, accountId, msg)
+  upsertMessage(accountId: number, msg: StoredMessage, event?: MailEventContext): void {
+    upsertMessage(this.db, accountId, msg, event)
   }
 
-  deleteMessage(accountId: number, messageId: string): void {
-    deleteMessage(this.db, accountId, messageId)
+  deleteMessage(accountId: number, messageId: string, event?: MailEventContext): void {
+    deleteMessage(this.db, accountId, messageId, event)
   }
 
   getMessage(accountId: number, messageId: string): StoredMessage | null {
     return getMessage(this.db, accountId, messageId)
+  }
+
+  beginResync(accountId: number): void {
+    beginResync(this.db, accountId)
+  }
+
+  sweepUnseen(accountId: number): void {
+    sweepUnseen(this.db, accountId)
   }
 
   upsertLabels(accountId: number, labels: Label[]): void {

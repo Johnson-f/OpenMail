@@ -1,6 +1,7 @@
 node_modules/
 dist/
 out/
+release/
 .remember/
 .DS_Store
 *.log
@@ -9,3 +10,7 @@ out/
 
 # superpowers
 docs/superpowers/
+.design/
+.superpowers/
+*.tsbuildinfo
+docs/

@@ -1,7 +1,7 @@
 import type { StoredMessage } from '@gmail/core'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { openDatabase, type Db } from './index.js'
-import { upsertMessage } from './messages.js'
+import { listThreads, mailboxCounts, upsertMessage } from './messages.js'
 import {
   abandonRow,
   effectiveLabels,
@@ -24,6 +24,10 @@ function msgWithLabels(labelIds: string[], overrides: Partial<StoredMessage> = {
     bodyHtml: '<p>Hello there</p>',
     internalDate: 1000,
     labelIds,
+    messageIdHeader: 'm1@example.com',
+    inReplyTo: '',
+    references: [],
+    attachments: [],
     ...overrides,
   }
 }
@@ -85,13 +89,38 @@ describe('outbox', () => {
       expect(effectiveLabels(db, accountId, 'm1')).toEqual(['STARRED', 'UNREAD'])
     })
 
-    it('stops replaying abandoned rows', () => {
+    it('stops replaying abandoned rows, so the next sync returns to Gmail state', () => {
       upsertMessage(db, accountId, msgWithLabels(['INBOX']))
       const id = enqueue(db, accountId, 'm1', ['STARRED'], [])
       expect(effectiveLabels(db, accountId, 'm1')).toEqual(['INBOX', 'STARRED'])
 
       abandonRow(db, id, 'gave up')
+      expect(effectiveLabels(db, accountId, 'm1')).toEqual(['INBOX', 'STARRED'])
+
+      upsertMessage(db, accountId, msgWithLabels(['INBOX']))
       expect(effectiveLabels(db, accountId, 'm1')).toEqual(['INBOX'])
+    })
+
+    it('applies the change when it is enqueued, in the same step as the outbox row', () => {
+      upsertMessage(db, accountId, msgWithLabels(['INBOX', 'UNREAD']))
+      enqueue(db, accountId, 'm1', [], ['INBOX'])
+
+      const stored = db.prepare(`SELECT label_id FROM message_labels WHERE message_id = 'm1'`).all()
+      expect(stored).toEqual([{ label_id: 'UNREAD' }])
+    })
+
+    it('replays a change enqueued before the message was stored', () => {
+      enqueue(db, accountId, 'm1', [], ['INBOX'])
+      upsertMessage(db, accountId, msgWithLabels(['INBOX', 'UNREAD']))
+      expect(effectiveLabels(db, accountId, 'm1')).toEqual(['UNREAD'])
+    })
+
+    it('keeps replaying a failed row after a sync', () => {
+      upsertMessage(db, accountId, msgWithLabels(['INBOX']))
+      const id = enqueue(db, accountId, 'm1', [], ['INBOX'])
+      markFailed(db, id, 'network')
+      upsertMessage(db, accountId, msgWithLabels(['INBOX']))
+      expect(effectiveLabels(db, accountId, 'm1')).toEqual([])
     })
 
     it('still replays failed rows (they are retried, not abandoned)', () => {
@@ -117,6 +146,33 @@ describe('outbox', () => {
 
       expect(effectiveLabels(db, 1, 'm1')).toEqual(['INBOX', 'STARRED'])
       expect(effectiveLabels(db, 2, 'm1')).toEqual(['INBOX'])
+    })
+  })
+
+  describe('local-first lists', () => {
+    it('drops an archived thread from the inbox immediately and keeps it out across a stale sync', () => {
+      upsertMessage(db, accountId, msgWithLabels(['INBOX', 'UNREAD']))
+      expect(listThreads(db, accountId, 'INBOX', 10).map((t) => t.threadId)).toEqual(['t1'])
+
+      const id = enqueue(db, accountId, 'm1', [], ['INBOX'])
+
+      expect(listThreads(db, accountId, 'INBOX', 10)).toEqual([])
+      expect(mailboxCounts(db, accountId, ['INBOX'])[0]).toMatchObject({ total: 0, unread: 0 })
+
+      upsertMessage(db, accountId, msgWithLabels(['INBOX', 'UNREAD']))
+      expect(listThreads(db, accountId, 'INBOX', 10)).toEqual([])
+
+      markUploaded(db, id, 'h1')
+      upsertMessage(db, accountId, msgWithLabels(['UNREAD']))
+      expect(listThreads(db, accountId, 'INBOX', 10)).toEqual([])
+    })
+
+    it('returns the thread to the inbox when the archive is abandoned and Gmail state is re-read', () => {
+      upsertMessage(db, accountId, msgWithLabels(['INBOX']))
+      const id = enqueue(db, accountId, 'm1', [], ['INBOX'])
+      abandonRow(db, id, 'gave up')
+      upsertMessage(db, accountId, msgWithLabels(['INBOX']))
+      expect(listThreads(db, accountId, 'INBOX', 10)).toHaveLength(1)
     })
   })
 

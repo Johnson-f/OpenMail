@@ -3,6 +3,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
     "paths": { "@/*": ["./src/*"], "@gmail/core": ["../core/src/index.ts"] }
   },
   "include": ["src/**/*"],
